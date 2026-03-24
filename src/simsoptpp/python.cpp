@@ -102,8 +102,10 @@ PYBIND11_MODULE(simsoptpp, m) {
 
     // the computation below is used in boozer_surface_residual.
     //
-    // G*dB_dc - 2*np.sum(B[..., None]*dB_dc, axis=2)[:, :, None, :] * tang[..., None] - B2[..., None, None] * (dxphi_dc + iota * dxtheta_dc)
-    m.def("boozer_dresidual_dc", [](double G, PyArray& dB_dc, PyArray& B, PyArray& tang, PyArray& B2, PyArray& dxphi_dc, double iota, PyArray& dxtheta_dc) {
+    // Geff*dB_dc - 2*np.sum(B[..., None]*dB_dc, axis=2)[:, :, None, :] * tang[..., None] - B2[..., None, None] * (dxphi_dc + iota * dxtheta_dc)
+    // where Geff = G + iota*I  (I is the plasma current, defaults to 0)
+    m.def("boozer_dresidual_dc", [](double G, PyArray& dB_dc, PyArray& B, PyArray& tang, PyArray& B2, PyArray& dxphi_dc, double iota, PyArray& dxtheta_dc, double I) {
+            double Geff = G + iota * I;
             int nphi = dB_dc.shape(0);
             int ntheta = dB_dc.shape(1);
             int ndofs = dB_dc.shape(3);
@@ -122,7 +124,7 @@ PYBIND11_MODULE(simsoptpp, m) {
                         auto dxtheta_dc_ptr = &(dxtheta_dc(i, j, d, 0));
                         auto tangijd = tang(i, j, d);
                         for (int m = 0; m < ndofs; ++m) {
-                            res_ptr[m] = G*dB_dc_ptr[m]
+                            res_ptr[m] = Geff*dB_dc_ptr[m]
                             - 2*B_dB_dc[m]*tangijd
                             - B2ij * (dxphi_dc_ptr[m] + iota*dxtheta_dc_ptr[m]);
                         }
@@ -131,11 +133,28 @@ PYBIND11_MODULE(simsoptpp, m) {
             }
             delete[] B_dB_dc;
             return res;
-        });
+        }, py::arg("G"), py::arg("dB_dc"), py::arg("B"), py::arg("tang"), py::arg("B2"),
+           py::arg("dxphi_dc"), py::arg("iota"), py::arg("dxtheta_dc"), py::arg("I") = 0.);
 
-    m.def("boozer_residual", &boozer_residual);
-    m.def("boozer_residual_ds", &boozer_residual_ds);
-    m.def("boozer_residual_ds2", &boozer_residual_ds2);
+    m.def("boozer_residual",
+          [](double G, double iota, Array& xphi, Array& xtheta, Array& B, bool weight_inv_modB, double I) {
+              return boozer_residual(G, I, iota, xphi, xtheta, B, weight_inv_modB);
+          }, py::arg("G"), py::arg("iota"), py::arg("xphi"), py::arg("xtheta"), py::arg("B"),
+             py::arg("weight_inv_modB"), py::arg("I") = 0.);
+    m.def("boozer_residual_ds",
+          [](double G, double iota, Array& B, Array& dB_dx, Array& xphi, Array& xtheta,
+             Array& dx_ds, Array& dxphi_ds, Array& dxtheta_ds, bool weight_inv_modB, double I) {
+              return boozer_residual_ds(G, I, iota, B, dB_dx, xphi, xtheta, dx_ds, dxphi_ds, dxtheta_ds, weight_inv_modB);
+          }, py::arg("G"), py::arg("iota"), py::arg("B"), py::arg("dB_dx"),
+             py::arg("xphi"), py::arg("xtheta"), py::arg("dx_ds"),
+             py::arg("dxphi_ds"), py::arg("dxtheta_ds"), py::arg("weight_inv_modB"), py::arg("I") = 0.);
+    m.def("boozer_residual_ds2",
+          [](double G, double iota, Array& B, Array& dB_dx, Array& d2B_dx2, Array& xphi, Array& xtheta,
+             Array& dx_ds, Array& dxphi_ds, Array& dxtheta_ds, bool weight_inv_modB, double I) {
+              return boozer_residual_ds2(G, I, iota, B, dB_dx, d2B_dx2, xphi, xtheta, dx_ds, dxphi_ds, dxtheta_ds, weight_inv_modB);
+          }, py::arg("G"), py::arg("iota"), py::arg("B"), py::arg("dB_dx"), py::arg("d2B_dx2"),
+             py::arg("xphi"), py::arg("xtheta"), py::arg("dx_ds"),
+             py::arg("dxphi_ds"), py::arg("dxtheta_ds"), py::arg("weight_inv_modB"), py::arg("I") = 0.);
 
     m.def("matmult", [](PyArray& A, PyArray&B) {
             // Product of an lxm matrix with an mxn matrix, results in an l x n matrix

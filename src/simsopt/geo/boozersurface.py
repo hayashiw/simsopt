@@ -84,7 +84,7 @@ class BoozerSurface(Optimizable):
     *[2]: Giuliani, A., Wechsung, F., Cerfon, A., Landreman, M., & Stadler, G. (2023). Direct stellarator coil optimization for nested magnetic surfaces with precise quasi-symmetry. Physics of Plasmas, 30(4).*
     """
 
-    def __init__(self, biotsavart, surface, label, targetlabel, constraint_weight=None, options=None):
+    def __init__(self, biotsavart, surface, label, targetlabel, constraint_weight=None, options=None, I=0.):
         """
         Args:
             biotsavart (:obj:`~simsopt.field.BiotSavart`): BiotSavart object.
@@ -118,6 +118,7 @@ class BoozerSurface(Optimizable):
         self.constraint_weight = constraint_weight
         self.boozer_type = 'ls' if constraint_weight else 'exact'
         self.need_to_run_code = True
+        self.I = I
 
         if options is None:
             options = {}
@@ -263,13 +264,13 @@ class BoozerSurface(Optimizable):
 
         num_res = 3 * s.quadpoints_phi.size * s.quadpoints_theta.size
         if derivatives == 0:
-            val = sopp.boozer_residual(G, iota, xphi, xtheta, B, weight_inv_modB)
+            val = sopp.boozer_residual(G, iota, xphi, xtheta, B, weight_inv_modB, self.I)
             boozer = val,
         elif derivatives == 1:
-            val, dval = sopp.boozer_residual_ds(G, iota, B, dB_dx, xphi, xtheta, dx_dc, dxphi_dc, dxtheta_dc, weight_inv_modB)
+            val, dval = sopp.boozer_residual_ds(G, iota, B, dB_dx, xphi, xtheta, dx_dc, dxphi_dc, dxtheta_dc, weight_inv_modB, self.I)
             boozer = val, dval
         elif derivatives == 2:
-            val, dval, d2val = sopp.boozer_residual_ds2(G, iota, B, dB_dx, d2B_by_dXdX, xphi, xtheta, dx_dc, dxphi_dc, dxtheta_dc, weight_inv_modB)
+            val, dval, d2val = sopp.boozer_residual_ds2(G, iota, B, dB_dx, d2B_by_dXdX, xphi, xtheta, dx_dc, dxphi_dc, dxtheta_dc, weight_inv_modB, self.I)
             boozer = val, dval, d2val
 
         # normalizing the residuals here
@@ -351,7 +352,7 @@ class BoozerSurface(Optimizable):
         s.set_dofs(sdofs)
         nsurfdofs = sdofs.size
 
-        boozer = boozer_surface_residual(s, iota, G, biotsavart, derivatives=derivatives+1)
+        boozer = boozer_surface_residual(s, iota, G, biotsavart, derivatives=derivatives+1, I=self.I)
         r, J = boozer[0:2]
 
         dl = np.zeros((xl.shape[0]-2,))
@@ -525,8 +526,8 @@ class BoozerSurface(Optimizable):
         P, L, U = lu(d2val)
         res = {
             "residual": r, "jacobian": dval, "hessian": d2val, "iter": i, "success": norm <= tol, "G": None,
-            "PLU": (P, L, U), "vjp": partial(boozer_surface_dlsqgrad_dcoils_vjp, weight_inv_modB=weight_inv_modB),
-            "type": "ls", "weight_inv_modB": weight_inv_modB
+            "PLU": (P, L, U), "vjp": partial(boozer_surface_dlsqgrad_dcoils_vjp, weight_inv_modB=weight_inv_modB, I=self.I),
+            "type": "ls", "weight_inv_modB": weight_inv_modB, "I": self.I
         }
         if G is None:
             s.set_dofs(x[:-1])
@@ -662,7 +663,7 @@ class BoozerSurface(Optimizable):
         s.set_dofs(sdofs)
         # When G=None, boozer_surface_residual returns J without G column
         # When G is provided, it returns J with G column
-        boozer = boozer_surface_residual(s, iota, G, self.biotsavart, derivatives=1, weight_inv_modB=weight_inv_modB)
+        boozer = boozer_surface_residual(s, iota, G, self.biotsavart, derivatives=1, weight_inv_modB=weight_inv_modB, I=self.I)
         r = boozer[0] / np.sqrt(num_res)
         J = boozer[1] / np.sqrt(num_res)
 
@@ -888,7 +889,7 @@ class BoozerSurface(Optimizable):
             G = 2. * np.pi * np.sum(np.abs([c.current.get_value() for c in self.biotsavart.coils])) * (4 * np.pi * 10**(-7) / (2 * np.pi))
         x = np.concatenate((s.get_dofs(), [iota, G]))
         i = 0
-        r, J = boozer_surface_residual(s, iota, G, self.biotsavart, derivatives=1)
+        r, J = boozer_surface_residual(s, iota, G, self.biotsavart, derivatives=1, I=self.I)
         norm = 1e6
         while i < maxiter:
             if s.stellsym:
@@ -916,7 +917,7 @@ class BoozerSurface(Optimizable):
             iota = x[-2]
             G = x[-1]
             i += 1
-            r, J = boozer_surface_residual(s, iota, G, self.biotsavart, derivatives=1)
+            r, J = boozer_surface_residual(s, iota, G, self.biotsavart, derivatives=1, I=self.I)
 
         if s.stellsym:
             J = np.vstack((
@@ -933,7 +934,9 @@ class BoozerSurface(Optimizable):
         P, L, U = lu(J)
         res = {
             "residual": r, "jacobian": J, "iter": i, "success": norm <= tol, "G": G, "s": s, "iota": iota, "PLU": (P, L, U),
-            "mask": mask, 'type': 'exact', "vjp": boozer_surface_dexactresidual_dcoils_dcurrents_vjp
+            "mask": mask, 'type': 'exact',
+            "vjp": partial(boozer_surface_dexactresidual_dcoils_dcurrents_vjp, I=self.I),
+            "I": self.I
         }
 
         if verbose:

@@ -337,7 +337,7 @@ class PrincipalCurvature(Optimizable):
         return Derivative({self.surface: deriv})
 
 
-def boozer_surface_residual(surface, iota, G, biotsavart, derivatives=0, weight_inv_modB=False):
+def boozer_surface_residual(surface, iota, G, biotsavart, derivatives=0, weight_inv_modB=False, I=0.):
     r"""
     For a given surface, this function computes the
     residual
@@ -376,6 +376,8 @@ def boozer_surface_residual(surface, iota, G, biotsavart, derivatives=0, weight_
     if not user_provided_G:
         G = 2. * np.pi * np.sum([np.abs(c.current.get_value()) for c in biotsavart.coils]) * (4 * np.pi * 10**(-7) / (2 * np.pi))
 
+    Geff = G + iota * I
+
     x = surface.gamma()
     xphi = surface.gammadash1()
     xtheta = surface.gammadash2()
@@ -391,7 +393,7 @@ def boozer_surface_residual(surface, iota, G, biotsavart, derivatives=0, weight_
 
     tang = xphi + iota * xtheta
     B2 = np.sum(B**2, axis=2)
-    residual = G*B - B2[..., None] * tang
+    residual = Geff*B - B2[..., None] * tang
 
     if weight_inv_modB:
         modB = np.sqrt(B2)
@@ -413,9 +415,9 @@ def boozer_surface_residual(surface, iota, G, biotsavart, derivatives=0, weight_
     dB_by_dX = biotsavart.dB_by_dX().reshape((nphi, ntheta, 3, 3))
     dB_dc = np.einsum('ijkl,ijkm->ijlm', dB_by_dX, dx_dc)
 
-    # dresidual_dc = G*dB_dc - 2*np.sum(B[..., None]*dB_dc, axis=2)[:, :, None, :] * tang[..., None] - B2[..., None, None] * (dxphi_dc + iota * dxtheta_dc)
-    dresidual_dc = sopp.boozer_dresidual_dc(G, dB_dc, B, tang, B2, dxphi_dc, iota, dxtheta_dc)
-    dresidual_diota = -B2[..., None] * xtheta
+    # dresidual_dc = Geff*dB_dc - 2*np.sum(B[..., None]*dB_dc, axis=2)[:, :, None, :] * tang[..., None] - B2[..., None, None] * (dxphi_dc + iota * dxtheta_dc)
+    dresidual_dc = sopp.boozer_dresidual_dc(G, dB_dc, B, tang, B2, dxphi_dc, iota, dxtheta_dc, I)
+    dresidual_diota = I*B - B2[..., None] * xtheta
 
     if weight_inv_modB:
         dB2_dc = 2*np.einsum('ijk,ijkl->ijl', B, dB_dc, optimize=True)
@@ -457,8 +459,8 @@ def boozer_surface_residual(surface, iota, G, biotsavart, derivatives=0, weight_
     term1 = -(dxphi_dc[..., None, :] + iota * dxtheta_dc[..., None, :]) * dB2_dc[..., None, :, None]
     term2 = -(dxphi_dc[..., :, None] + iota * dxtheta_dc[..., :, None]) * dB2_dc[..., None, None, :]
     term3 = -(xphi[..., None, None] + iota * xtheta[..., None, None]) * d2B2_dcdc[..., None, :, :]
-    d2residual_by_dcdc = G * d2B_dcdc + term1 + term2 + term3
-    d2residual_by_dcdiota = -(dB2_dc[..., None, :] * xtheta[..., :, None] + B2[..., None, None] * dxtheta_dc)
+    d2residual_by_dcdc = Geff * d2B_dcdc + term1 + term2 + term3
+    d2residual_by_dcdiota = I*dB_dc - dB2_dc[..., None, :] * xtheta[..., :, None] - B2[..., None, None] * dxtheta_dc
     d2residual_by_diotadiota = np.zeros(dresidual_diota.shape)
 
     if weight_inv_modB:
@@ -1005,7 +1007,7 @@ class BoozerResidual(Optimizable):
         surface = self.surface
         iota = self.boozer_surface.res['iota']
         G = self.boozer_surface.res['G']
-        r, J = boozer_surface_residual(surface, iota, G, self.biotsavart, derivatives=1, weight_inv_modB=self.boozer_surface.res['weight_inv_modB'])
+        r, J = boozer_surface_residual(surface, iota, G, self.biotsavart, derivatives=1, weight_inv_modB=self.boozer_surface.res['weight_inv_modB'], I=self.boozer_surface.res['I'])
         rtil = np.concatenate((r/np.sqrt(num_points), [np.sqrt(self.constraint_weight)*(self.boozer_surface.label.J()-self.boozer_surface.targetlabel)]))
         self._J = 0.5*np.sum(rtil**2)
 
@@ -1038,7 +1040,7 @@ class BoozerResidual(Optimizable):
         nphi = self.surface.quadpoints_phi.size
         ntheta = self.surface.quadpoints_theta.size
         num_points = 3 * nphi * ntheta
-        r, r_dB = boozer_surface_residual_dB(surface, self.boozer_surface.res['iota'], self.boozer_surface.res['G'], self.biotsavart, derivatives=0, weight_inv_modB=res['weight_inv_modB'])
+        r, r_dB = boozer_surface_residual_dB(surface, self.boozer_surface.res['iota'], self.boozer_surface.res['G'], self.biotsavart, derivatives=0, weight_inv_modB=res['weight_inv_modB'], I=self.boozer_surface.res['I'])
 
         r /= np.sqrt(num_points)
         r_dB /= np.sqrt(num_points)
@@ -1048,7 +1050,7 @@ class BoozerResidual(Optimizable):
         return dJ_by_dB
 
 
-def boozer_surface_dexactresidual_dcoils_dcurrents_vjp(lm, booz_surf, iota, G):
+def boozer_surface_dexactresidual_dcoils_dcurrents_vjp(lm, booz_surf, iota, G, I=0.):
     r"""
     For a given surface with points :math:`x` on it, this function computes the
     vector-Jacobian product of:
@@ -1071,7 +1073,7 @@ def boozer_surface_dexactresidual_dcoils_dcurrents_vjp(lm, booz_surf, iota, G):
     # G must be provided here
     assert G is not None
 
-    res, dres_dB = boozer_surface_residual_dB(surface, iota, G, biotsavart)
+    res, dres_dB = boozer_surface_residual_dB(surface, iota, G, biotsavart, I=I)
     dres_dB = dres_dB.reshape((-1, 3, 3))
 
     lm_label = lm[-1]
@@ -1086,7 +1088,7 @@ def boozer_surface_dexactresidual_dcoils_dcurrents_vjp(lm, booz_surf, iota, G):
     return lm_times_dres_dcoils+lm_times_dlabel_dcoils
 
 
-def boozer_surface_dlsqgrad_dcoils_vjp(lm, booz_surf, iota, G, weight_inv_modB=True):
+def boozer_surface_dlsqgrad_dcoils_vjp(lm, booz_surf, iota, G, weight_inv_modB=True, I=0.):
     r"""
     For a given surface with points x on it, this function computes the
     vector-Jacobian product of \lm^T * dlsqgrad_dcoils, \lm^T * dlsqgrad_dcurrents:
@@ -1103,7 +1105,7 @@ def boozer_surface_dlsqgrad_dcoils_vjp(lm, booz_surf, iota, G, weight_inv_modB=T
     ntheta = surface.quadpoints_theta.size
     num_points = 3 * nphi * ntheta
     # r, dr_dB, J, d2residual_dsurfacedB, d2residual_dsurfacedgradB
-    boozer = boozer_surface_residual_dB(surface, iota, G, biotsavart, derivatives=1, weight_inv_modB=weight_inv_modB)
+    boozer = boozer_surface_residual_dB(surface, iota, G, biotsavart, derivatives=1, weight_inv_modB=weight_inv_modB, I=I)
     r = boozer[0]/np.sqrt(num_points)
     dr_dB = boozer[1].reshape((-1, 3, 3))/np.sqrt(num_points)
     dr_ds = boozer[2]/np.sqrt(num_points)
@@ -1117,13 +1119,13 @@ def boozer_surface_dlsqgrad_dcoils_vjp(lm, booz_surf, iota, G, weight_inv_modB=T
     return dres_dcoils[0]+dres_dcoils[1]
 
 
-def boozer_surface_residual_dB(surface, iota, G, biotsavart, derivatives=0, weight_inv_modB=False):
+def boozer_surface_residual_dB(surface, iota, G, biotsavart, derivatives=0, weight_inv_modB=False, I=0.):
     """
     For a given surface with points x on it, this function computes the
     differentiated residual
-       d/dB[ G*B_BS(x) - ||B_BS(x)||^2 * (x_phi + iota * x_theta) ]
+       d/dB[ (G+iota*I)*B_BS(x) - ||B_BS(x)||^2 * (x_phi + iota * x_theta) ]
     as well as the derivatives of this residual with respect to surface dofs,
-    iota, and G.
+    iota, and G.  I is the plasma current (fixed, not a DOF).
     G is known for exact boozer surfaces, so if G=None is passed, then that
     value is used instead.
     """
@@ -1131,6 +1133,8 @@ def boozer_surface_residual_dB(surface, iota, G, biotsavart, derivatives=0, weig
     user_provided_G = G is not None
     if not user_provided_G:
         G = 2. * np.pi * np.sum(np.abs([c.current.get_value() for c in biotsavart.coils])) * (4 * np.pi * 10**(-7) / (2 * np.pi))
+
+    Geff = G + iota * I
 
     x = surface.gamma()
     xphi = surface.gammadash1()
@@ -1145,9 +1149,9 @@ def boozer_surface_residual_dB(surface, iota, G, biotsavart, derivatives=0, weig
     B = biotsavart.B().reshape((nphi, ntheta, 3))
 
     tang = xphi + iota * xtheta
-    residual = G*B - np.sum(B**2, axis=2)[..., None] * tang
+    residual = Geff*B - np.sum(B**2, axis=2)[..., None] * tang
 
-    GI = np.eye(3, 3) * G
+    GI = np.eye(3, 3) * Geff
     dresidual_dB = GI[None, None, :, :] - 2. * tang[:, :, :, None] * B[:, :, None, :]
 
     if weight_inv_modB:
@@ -1175,13 +1179,13 @@ def boozer_surface_residual_dB(surface, iota, G, biotsavart, derivatives=0, weig
     dB_by_dX = biotsavart.dB_by_dX().reshape((nphi, ntheta, 3, 3))
     dB_dc = np.einsum('ijkl,ijkm->ijlm', dB_by_dX, dx_dc, optimize=True)
     dtang_dc = dxphi_dc + iota * dxtheta_dc
-    dresidual_dc = G*dB_dc \
+    dresidual_dc = Geff*dB_dc \
         - 2*np.sum(B[..., None]*dB_dc, axis=2)[:, :, None, :] * tang[..., None] \
         - np.sum(B**2, axis=2)[..., None, None] * dtang_dc
-    dresidual_diota = -np.sum(B**2, axis=2)[..., None] * xtheta
+    dresidual_diota = I*B - np.sum(B**2, axis=2)[..., None] * xtheta
 
     d2residual_dcdB = -2*dB_dc[:, :, None, :, :] * tang[:, :, :, None, None] - 2*B[:, :, None, :, None] * dtang_dc[:, :, :, None, :]
-    d2residual_diotadB = -2.*B[:, :, None, :] * xtheta[:, :, :, None]
+    d2residual_diotadB = I*np.eye(3)[None, None, :, :] - 2.*B[:, :, None, :] * xtheta[:, :, :, None]
     d2residual_dcdgradB = -2.*B[:, :, None, None, :, None]*dx_dc[:, :, None, :, None, :]*tang[:, :, :, None, None, None]
     idx = np.arange(3)
     d2residual_dcdgradB[:, :, idx, :, idx, :] += dx_dc * G
