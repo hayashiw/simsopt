@@ -413,10 +413,12 @@ class Surface(Optimizable):
             phib = varphi2phi(varphib, phi0)
             
             if not np.all((phia <= phib) & (phib <= phic)):
-                raise Exception("An error occured during calculation of the cross section.  \
-                        This happens when a surface 'goes back' on itself. \
-                        The cylindrical angle is assumed to be monotonically increasing \
-                        with varphi, which is not the case for this surface.")
+                raise Exception(
+                    "An error occured during calculation of the cross section. "
+                    "This happens when a surface 'goes back' on itself. "
+                    "The cylindrical angle is assumed to be monotonically increasing "
+                    "with varphi, which is not the case for this surface."
+                )
 
             flag = (phib - phi_prime) * (phic - phi_prime) > 0
             # if flag is true,  then root lies on interval [a,b)
