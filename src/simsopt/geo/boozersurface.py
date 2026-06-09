@@ -104,6 +104,9 @@ class BoozerSurface(Optimizable):
                 - `bfgs_maxiter` (int): maximum number of iterations for BFGS solver. Defaults to 1500.
                 - `limited_memory` (bool): True if L-BFGS solver is desired, False if the BFGS solver otherwise. Defaults to False.
                 - `weight_inv_modB` (float): for BoozerLS surfaces, weight the residual by modB so that it does not scale with coil currents.  Defaults to True.
+            I (float, Optional): The value of I (toroidal current * mu0) to use in the Boozer residual.
+                This value is used with a proxy coil for approximating finite plasma current. The proxy current must be fixed.
+                As a result, `I` is also fixed. Defaults to 0.
         """
         super().__init__(depends_on=[biotsavart])
 
