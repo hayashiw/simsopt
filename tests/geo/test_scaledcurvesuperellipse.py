@@ -19,7 +19,7 @@ class SuperEllipseTesting(unittest.TestCase):
     def test_shared_dofs(self):
         # a and n live on the parent, b on each instance.
         shared = CurveSuperEllipse(32, 0.030, 0.075, 4.0)
-        rows = [ScaledCurveSuperEllipse(shared, b) for b in (0.075, 0.068, 0.060)]
+        rows = [ScaledCurveSuperEllipse(shared, shared_dofs=("a", "n"), b=b) for b in (0.075, 0.068, 0.060)]
         self.assertEqual(list(shared.local_dof_names), ['a', 'n'])
         self.assertEqual(list(rows[0].local_dof_names), ['b'])
         names = set()
@@ -39,7 +39,7 @@ class SuperEllipseTesting(unittest.TestCase):
 
     def test_matches_curvesuperellipse(self):
         shared = CurveSuperEllipse(32, 0.030, 0.075, 4.0)
-        row = ScaledCurveSuperEllipse(shared, 0.068)
+        row = ScaledCurveSuperEllipse(shared, shared_dofs=("a", "n"), b=0.068)
         reference = CurveSuperEllipse(32, 0.030, 0.068, 4.0)
         np.testing.assert_allclose(row.gamma(), reference.gamma())
 
@@ -51,7 +51,7 @@ class SuperEllipseTesting(unittest.TestCase):
                        MeanSquaredCurvature]:
             with self.subTest(objective=make_J):
                 shared = CurveSuperEllipse(32, 0.030, 0.075, 4.0)
-                row = ScaledCurveSuperEllipse(shared, 0.068)
+                row = ScaledCurveSuperEllipse(shared, shared_dofs=("a", "n"), b=0.068)
                 J = make_J(row)
                 self.assertEqual(len(J.dof_names), 3)
                 self.assertTrue(np.all(np.abs(J.dJ()) > 1e-9))
@@ -76,7 +76,7 @@ class SuperEllipseTesting(unittest.TestCase):
         surface.set_rc(1, 0, 0.10)
         surface.set_zs(1, 0, 0.15)
         shared = CurveSuperEllipse(32, 0.030, 0.075, 4.0)
-        row = ScaledCurveSuperEllipse(shared, 0.068)
+        row = ScaledCurveSuperEllipse(shared, shared_dofs=("a", "n"), b=0.068)
         placed = CurvePlanarOnSurface(row, surface, 0, 2)
         self.assertEqual(list(shared.local_dof_names), ['a', 'n'])
         self.assertEqual(list(row.local_dof_names), ['b'])

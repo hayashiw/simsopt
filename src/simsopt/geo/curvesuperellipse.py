@@ -218,93 +218,93 @@ class CurveSuperEllipse(JaxCurve):
         return 4 * a * b * gamma_fn(1 + 1 / n)**2 / gamma_fn(1 + 2 / n)
 
 
-# Dofs of the parent curve that a scaled instance supplies or does not use.
-UNUSED_PARENT_DOF_NAMES = ['b', 'q0', 'qi', 'qj', 'qk', 'X', 'Y', 'Z']
+ALL_DOF_NAMES = ['a', 'b', 'n', 'q0', 'qi', 'qj', 'qk', 'X', 'Y', 'Z']
+PLACEMENT_DOF_NAMES = ['q0', 'qi', 'qj', 'qk', 'X', 'Y', 'Z']
+SHAPE_DOF_NAMES = ['a', 'b', 'n']
 
 
 class ScaledCurveSuperEllipse(sopp.Curve, Curve):
     r"""
-    ``ScaledCurveSuperEllipse`` is a :class:`CurveSuperEllipse` that takes its
-    semi-axis :math:`a` and exponent :math:`n` from another
-    ``CurveSuperEllipse``, keeping only :math:`b` as its own degree of freedom.
+    ``ScaledCurveSuperEllipse`` is a :class:`CurveSuperEllipse` that shares 
+    dofs in `shared_dofs` with `curve_to_scale`.
 
     Used, for example, for an array of dipole coils on an axisymmetric winding
     surface, where every coil shares one poloidal semi-axis and one exponent
     but the toroidal semi-axis grows with the local major radius.
 
-    On construction the parent's ``b`` is fixed, since each instance supplies
-    its own, along with the parent's placement dofs, which a scaled instance
-    never uses. The parent is left with ``a`` and ``n`` free.
-
-    The dofs are stored in the order
-
-    .. math::
-       [b]
-
-    with :math:`a` and :math:`n` contributed by the parent curve.
-
     Args:
-        curve_to_scale (CurveSuperEllipse): The curve supplying ``a`` and ``n``.
-        b (float): Initial semi-axis along the plane's local :math:`y`.
+        curve_to_scale (CurveSuperEllipse): The base curve that supplies the global dofs.
+        shared_dofs (tuple, optional): Tuple of dofs to share with `curve_to_scale`.
+        a (float, optional): Initial semi-axis along the plane's local :math:`x`.
+        b (float, optional): Initial semi-axis along the plane's local :math:`y`.
+        n (float, optional): Initial superellipse exponent. Must exceed 1.
         dofs (array, optional): Array of dofs.
     """
 
-    def __init__(self, curve_to_scale, b, dofs=None):
-        if b <= 0:
-            raise ValueError(f"The semi-axis must be positive; got b={b}.")
+    def __init__(self, curve_to_scale, shared_dofs=(), a=0.1, b=0.1, n=3.0, dofs=None):
+        bad = [n for n in shared_dofs if n not in SHAPE_DOF_NAMES]
+        if bad:
+            raise ValueError(f"shared dofs must be among {SHAPE_DOF_NAMES}; got {bad}.")
+        self._shared_dofs = tuple(n for n in SHAPE_DOF_NAMES if n in shared_dofs)
+        self._local_names = tuple(n for n in SHAPE_DOF_NAMES if n not in shared_dofs)
+        self._local_idx = [ALL_DOF_NAMES.index(n) for n in self._local_names]
+        
         self.curve_to_scale = curve_to_scale
-        self._b = b
-        for name in UNUSED_PARENT_DOF_NAMES:
+        for name in PLACEMENT_DOF_NAMES + list(self._local_names):
             self.curve_to_scale.fix(name)
-        self.curve = CurveSuperEllipse(curve_to_scale.quadpoints,
-                                       curve_to_scale.get('a'), b,
-                                       curve_to_scale.get('n'))
+
+        given = {"a": a, "b": b, "n": n}
+        values = {name: (given[name] if name in self._local_names
+                         else curve_to_scale.get(name))
+                  for name in SHAPE_DOF_NAMES}
+        x0 = np.array([values[name] for name in self._local_names])
+        self.curve = CurveSuperEllipse(
+            curve_to_scale.quadpoints, values['a'], values['b'], values['n'])
         sopp.Curve.__init__(self, self.curve.quadpoints)
-        if dofs is None:
-            Curve.__init__(self, x0=np.array([b]), names=self._make_names(),
-                           depends_on=[curve_to_scale],
-                           external_dof_setter=ScaledCurveSuperEllipse.set_dofs_impl)
-        else:
-            Curve.__init__(self, dofs=dofs, names=self._make_names(),
-                           depends_on=[curve_to_scale],
-                           external_dof_setter=ScaledCurveSuperEllipse.set_dofs_impl)
+        kwargs = ({"x0": x0} if dofs is None else {"dofs": dofs})
+        Curve.__init__(self, names=self._make_names(), depends_on=[curve_to_scale],
+                       external_dof_setter=ScaledCurveSuperEllipse.set_dofs_impl, **kwargs)
+        
+        if 'n' in self._local_names:
+            self.set_lower_bound('n', 1.0) # pyright: ignore[reportArgumentType]
+
+    @property
+    def a(self):
+        self._update_curve()
+        return float(self.curve.get('a'))
+
+    @property
+    def b(self):
+        self._update_curve()
+        return float(self.curve.get('b'))
+
+    @property
+    def n(self):
+        self._update_curve()
+        return float(self.curve.get('n'))
 
     def num_dofs(self):
-        """
-        This function returns the number of dofs associated to this object.
-        """
-        return 1
+        return len(self._local_names)
 
     def get_dofs(self):
-        """
-        This function returns the dofs associated to this object.
-        """
-        return np.array([self.curve.get('b')])
+        return np.array([self.curve.get(n) for n in self._local_names])
 
     def set_dofs_impl(self, dofs):
-        """
-        This function sets the dofs associated to this object.
-        """
-        self._update_curve(b=float(dofs[0]))
+        self._update_curve(**dict(zip(self._local_names, map(float, dofs))))
 
     def _make_names(self):
-        """
-        This function returns the names of the dofs associated to this object.
+        return list(self._local_names)
 
-        Returns:
-            List of dof names.
-        """
-        return ['b']
-
-    def _update_curve(self, b=None):
-        """
-        This function copies a and n from the parent curve into the scaled
-        curve, together with b, which this object owns.
-        """
-        if b is None:
-            b = self.curve.get('b')
-        self.curve.x = np.array([self.curve_to_scale.get('a'), b,
-                                 self.curve_to_scale.get('n'),
+    def _update_curve(self, **local):
+        values = {}
+        for name in SHAPE_DOF_NAMES:
+            if name in local:
+                values[name] = local[name]
+            elif name in self._local_names:
+                values[name] = self.curve.get(name)
+            else:
+                values[name] = self.curve_to_scale.get(name)
+        self.curve.x = np.array([values['a'], values['b'], values['n'],
                                  1., 0., 0., 0., 0., 0., 0.])
 
     def recompute_bell(self, parent=None):
@@ -334,14 +334,8 @@ class ScaledCurveSuperEllipse(sopp.Curve, Curve):
         gammadashdashdash[:] = self.curve.gammadashdashdash()
 
     def _split_vjp(self, dofs_vjp):
-        """
-        This function splits a vector Jacobian product over the scaled curve's
-        dofs between this object, which owns b, and the parent curve, which
-        owns a and n. The parent is handed the whole vector; its fixed dofs
-        are masked out by the Derivative itself.
-        """
         dofs_vjp = np.asarray(dofs_vjp)
-        return (Derivative({self: dofs_vjp[1:2]})  # pyright: ignore[reportArgumentType]
+        return (Derivative({self: dofs_vjp[self._local_idx]}) # pyright: ignore[reportArgumentType]
                 + Derivative({self.curve_to_scale: dofs_vjp})) # pyright: ignore[reportArgumentType]
 
     def dgamma_by_dcoeff_vjp(self, v):

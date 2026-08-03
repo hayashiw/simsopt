@@ -198,6 +198,9 @@ class CurvePlanarOnSurface(sopp.Curve, Curve):
         w = (v @ self.rotation_matrix()) @ self.base_rotation.T
         base = self.curve.dgammadashdashdash_by_dcoeff_vjp(w)
         return base + self._rotate_surface_vjp(v, self._local_vectors(self.curve.gammadashdashdash()))
+
+    def dkappa_by_dcoeff_vjp(self, v):
+        return self.curve.dkappa_by_dcoeff_vjp(v)
     
     def num_dofs(self):
         """
