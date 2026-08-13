@@ -174,6 +174,8 @@ class CurveSuperEllipse(JaxCurve):
                              external_dof_setter=CurveSuperEllipse.set_dofs_impl,
                              names=self._make_names())
         self.set_lower_bound('n', 1.0) # pyright: ignore[reportArgumentType]
+        self.set_lower_bound('a', 1e-12) # pyright: ignore[reportArgumentType]
+        self.set_lower_bound('b', 1e-12) # pyright: ignore[reportArgumentType]
         self.dkappa_by_dcoeff_vjp_jax = jit(
             lambda x, v: vjp(lambda d: safe_kappa_pure(self.gammadash_jax(d),
                                                        self.gammadashdash_jax(d)),
@@ -248,6 +250,7 @@ class ScaledCurveSuperEllipse(sopp.Curve, Curve):
         self._shared_dofs = tuple(n for n in SHAPE_DOF_NAMES if n in shared_dofs)
         self._local_names = tuple(n for n in SHAPE_DOF_NAMES if n not in shared_dofs)
         self._local_idx = [ALL_DOF_NAMES.index(n) for n in self._local_names]
+        self._shared_idx = [ALL_DOF_NAMES.index(name) for name in self._shared_dofs]
         
         self.curve_to_scale = curve_to_scale
         for name in PLACEMENT_DOF_NAMES + list(self._local_names):
@@ -267,6 +270,10 @@ class ScaledCurveSuperEllipse(sopp.Curve, Curve):
         
         if 'n' in self._local_names:
             self.set_lower_bound('n', 1.0) # pyright: ignore[reportArgumentType]
+        if 'a' in self._local_names:
+            self.set_lower_bound('a', 1e-12) # pyright: ignore[reportArgumentType]
+        if 'b' in self._local_names:
+            self.set_lower_bound('b', 1e-12) # pyright: ignore[reportArgumentType]
 
     @property
     def a(self):
@@ -335,8 +342,10 @@ class ScaledCurveSuperEllipse(sopp.Curve, Curve):
 
     def _split_vjp(self, dofs_vjp):
         dofs_vjp = np.asarray(dofs_vjp)
+        parent_vjp = np.zeros_like(dofs_vjp)
+        parent_vjp[self._shared_idx] = dofs_vjp[self._shared_idx]
         return (Derivative({self: dofs_vjp[self._local_idx]}) # pyright: ignore[reportArgumentType]
-                + Derivative({self.curve_to_scale: dofs_vjp})) # pyright: ignore[reportArgumentType]
+                + Derivative({self.curve_to_scale: parent_vjp})) # pyright: ignore[reportArgumentType]
 
     def dgamma_by_dcoeff_vjp(self, v):
         self._update_curve()
