@@ -14,7 +14,7 @@ from ..objectives.utilities import forward_backward
 __all__ = ['Area', 'Volume', 'ToroidalFlux', 'PrincipalCurvature',
            'QfmResidual', 'boozer_surface_residual', 'Iotas',
            'MajorRadius', 'NonQuasiSymmetricRatio', 'BoozerResidual',
-           'AspectRatio', 'SurfaceSurfaceDistance']
+           'AspectRatio', 'SurfaceSurfaceDistance', 'BoozerSurfaceObjective']
 
 
 class AspectRatio(Optimizable):
@@ -1362,3 +1362,60 @@ class SurfaceSurfaceDistance(Optimizable):
         })
 
     return_fn_map = {'J': J, 'dJ': dJ}
+
+
+class BoozerSurfaceObjective(Optimizable):
+    r"""
+    Wraps an objective that depends on the shapes of one or more Boozer surfaces, and carries its
+    gradient through each surface's Boozer solve to the coils.
+
+    A Boozer surface's dofs are set by the solve, not by the optimizer, so they are kept out of
+    this wrapper's dofs. The part of the objective's gradient with respect to each surface goes
+    through that surface's adjoint, as in :obj:`MajorRadius`; the other parts, such as curve dofs,
+    are kept as they are.
+
+    Args:
+        boozer_surfaces: A BoozerSurface, or a list of them, whose surfaces the objective uses.
+        objective: Optimizable with ``J`` and ``dJ`` that depends on those surfaces.
+    """
+
+    def __init__(self, boozer_surfaces, objective):
+        if not isinstance(boozer_surfaces, (list, tuple)):
+            boozer_surfaces = [boozer_surfaces]
+        surfaces = [b.surface for b in boozer_surfaces]
+        lineage = objective.unique_dof_lineage
+        if not all(any(o is s for o in lineage) for s in surfaces):
+            raise ValueError("objective must depend on the surface of every Boozer surface")
+        # Only the dof owners other than the surfaces: nodes without dofs, such as the objective
+        # itself, depend on the surfaces and would bring their dofs in.
+        others = [o for o in lineage
+                  if o.local_dof_size and not any(o is s for s in surfaces)]
+        super().__init__(depends_on=list(boozer_surfaces) + others)
+        self.boozer_surfaces = list(boozer_surfaces)
+        self.objective = objective
+
+    def run_code(self):
+        for b in self.boozer_surfaces:
+            if b.need_to_run_code:
+                b.run_code(b.res['iota'], G=b.res['G'])
+
+    def J(self):
+        self.run_code()
+        return self.objective.J()
+
+    @derivative_dec
+    def dJ(self):
+        self.run_code()
+        deriv = self.objective.dJ(partials=True)
+        surfaces = [b.surface for b in self.boozer_surfaces]
+        dJ = Derivative({k: v for k, v in deriv.data.items()
+                         if not any(k is s for s in surfaces)})
+        for b in self.boozer_surfaces:
+            P, L, U = b.res['PLU']
+            # tack on dJ_diota = dJ_dG = 0 to the end of dJ_ds
+            dJ_ds = np.zeros(L.shape[0])
+            dj_ds = deriv(b.surface)
+            dJ_ds[:dj_ds.size] = dj_ds
+            adj = forward_backward(P, L, U, dJ_ds)
+            dJ = dJ - b.res['vjp'](adj, b, b.res['iota'], b.res['G'])
+        return dJ
